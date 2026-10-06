@@ -77,7 +77,7 @@ struct OpenAPIEndpointTests {
 
     @Test func endpointAdvertisesACustomExternalBasePath() async throws {
         let (_, store) = makeTestStore()
-        let app = makeTestApp(store: store, externalBasePath: "/reminders")
+        let app = makeTestApp(store: store, externalBasePath: "/custom/reminders-mcp")
 
         try await app.test(.router) { client in
             try await client.execute(uri: "/openapi", method: .get) { response in
@@ -87,7 +87,7 @@ struct OpenAPIEndpointTests {
                     ) as? [String: Any]
                 )
                 let servers = try #require(document["servers"] as? [[String: Any]])
-                #expect(servers.first?["url"] as? String == "/reminders")
+                #expect(servers.first?["url"] as? String == "/custom/reminders-mcp")
             }
         }
     }

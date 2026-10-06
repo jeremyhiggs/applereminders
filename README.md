@@ -194,9 +194,13 @@ reminders agent install
 reminders agent status
 reminders agent uninstall
 
-# optionally publish the launchd server beneath one HTTPS Tailscale Serve path
+# optionally choose any non-root HTTPS Tailscale Serve path
 reminders agent install --tailscale-serve-path /reminders
 ```
+
+There is no default Serve path. Omitting `--tailscale-serve-path` keeps the
+existing behavior: the LaunchAgent runs `reminders serve` with no extra
+arguments and binds directly to the Mac's Tailscale interface.
 
 `serve --generate-token` prints the token once, but it is not ephemeral: it is
 saved to `~/.config/reminders-mcp/token` and you can read it back anytime with

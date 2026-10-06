@@ -46,7 +46,7 @@ struct LaunchAgentPlistTests {
             serveArguments: [
                 "--bind", "127.0.0.1",
                 "--port", "7364",
-                "--external-base-path", "/reminders",
+                "--external-base-path", "/custom/reminders-mcp",
             ]
         )
         let object = try PropertyListSerialization.propertyList(
@@ -64,7 +64,7 @@ struct LaunchAgentPlistTests {
             "--port",
             "7364",
             "--external-base-path",
-            "/reminders",
+            "/custom/reminders-mcp",
         ])
     }
 

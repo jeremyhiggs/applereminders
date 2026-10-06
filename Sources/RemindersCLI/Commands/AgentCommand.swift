@@ -69,6 +69,15 @@ struct AgentCommand: ParsableCommand {
         ]
     }
 
+    static func launchAgentServeArguments(path: String?) -> [String] {
+        guard let path else { return [] }
+        return [
+            "--bind", localBindHost,
+            "--port", String(ServeCommand.defaultPort),
+            "--external-base-path", path,
+        ]
+    }
+
     static func hasFunnelOnHTTPSPort(statusOutput: String) throws -> Bool {
         let json: Substring
         if let objectStart = statusOutput.firstIndex(of: "{") {
@@ -197,8 +206,7 @@ struct AgentCommand: ParsableCommand {
 
         func run() throws {
             let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
-            let serveArguments: [String]
-            if let tailscaleServePath {
+            if tailscaleServePath != nil {
                 let status = try AgentCommand.tailscale(["serve", "status", "--json"])
                 guard status.status == 0 else {
                     throw ValidationError(
@@ -212,14 +220,10 @@ struct AgentCommand: ParsableCommand {
                             + "on that port; doing so would make existing Funnel routes private."
                     )
                 }
-                serveArguments = [
-                    "--bind", AgentCommand.localBindHost,
-                    "--port", String(ServeCommand.defaultPort),
-                    "--external-base-path", tailscaleServePath,
-                ]
-            } else {
-                serveArguments = []
             }
+            let serveArguments = AgentCommand.launchAgentServeArguments(
+                path: tailscaleServePath
+            )
             try FileManager.default.createDirectory(
                 atPath: (LaunchAgent.plistPath as NSString).deletingLastPathComponent,
                 withIntermediateDirectories: true

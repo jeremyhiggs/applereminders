@@ -9,10 +9,17 @@ struct AgentCommandTests {
 
     @Test func installAcceptsACustomTailscaleServePath() throws {
         let command = try AgentCommand.Install.parse([
-            "--tailscale-serve-path", "/reminders",
+            "--tailscale-serve-path", "/custom/reminders-mcp",
         ])
 
-        #expect(command.tailscaleServePath == "/reminders")
+        #expect(command.tailscaleServePath == "/custom/reminders-mcp")
+    }
+
+    @Test func installWithoutAPathKeepsTheExistingServeArguments() throws {
+        let command = try AgentCommand.Install.parse([])
+
+        #expect(command.tailscaleServePath == nil)
+        #expect(AgentCommand.launchAgentServeArguments(path: nil).isEmpty)
     }
 
     @Test(
@@ -39,12 +46,22 @@ struct AgentCommandTests {
 
     @Test func tailscaleServeArgumentsMountTheLoopbackServerAtTheCustomPath() {
         #expect(
-            AgentCommand.tailscaleServeArguments(path: "/reminders") == [
+            AgentCommand.tailscaleServeArguments(path: "/custom/reminders-mcp") == [
                 "serve",
                 "--bg",
                 "--https=443",
-                "--set-path=/reminders",
+                "--set-path=/custom/reminders-mcp",
                 "http://127.0.0.1:7364",
+            ]
+        )
+    }
+
+    @Test func customPathFlowsIntoTheLaunchAgentArguments() {
+        #expect(
+            AgentCommand.launchAgentServeArguments(path: "/custom/reminders-mcp") == [
+                "--bind", "127.0.0.1",
+                "--port", "7364",
+                "--external-base-path", "/custom/reminders-mcp",
             ]
         )
     }
