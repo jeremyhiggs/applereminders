@@ -254,6 +254,7 @@ private func openAPISpecJSONTemplate(encodedServerURL: String) -> String {
 }
 
 func renderOpenAPISpecJSON(serverURL: String = "/") -> String {
+    // A Swift String is always a valid JSON fragment, so serialization cannot fail.
     let encodedURL = try! JSONSerialization.data(
         withJSONObject: serverURL,
         options: .fragmentsAllowed
