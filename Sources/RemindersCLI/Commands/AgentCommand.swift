@@ -6,6 +6,22 @@ import Foundation
 import RemindersServer
 
 struct AgentCommand: ParsableCommand {
+    static let localBindHost = "127.0.0.1"
+    static let tailscaleHTTPSPort = 443
+
+    private struct TailscaleServeStatus: Decodable {
+        let allowFunnel: [String: Bool]?
+
+        enum CodingKeys: String, CodingKey {
+            case allowFunnel = "AllowFunnel"
+        }
+    }
+
+    struct LaunchAgentSnapshot {
+        let plistContents: String?
+        let wasLoaded: Bool
+    }
+
     static let configuration = CommandConfiguration(
         commandName: "agent",
         abstract: "Manage the launchd agent that keeps the network server running.",
@@ -15,8 +31,15 @@ struct AgentCommand: ParsableCommand {
     /// Runs launchctl with the given arguments, returning status and combined output.
     @discardableResult
     static func launchctl(_ arguments: [String]) throws -> (status: Int32, output: String) {
+        try runCommand(executablePath: "/bin/launchctl", arguments: arguments)
+    }
+
+    private static func runCommand(
+        executablePath: String,
+        arguments: [String]
+    ) throws -> (status: Int32, output: String) {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        process.executableURL = URL(fileURLWithPath: executablePath)
         process.arguments = arguments
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -25,6 +48,106 @@ struct AgentCommand: ParsableCommand {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
+    }
+
+    /// Runs the Tailscale CLI inherited from the installer's shell environment.
+    @discardableResult
+    static func tailscale(_ arguments: [String]) throws -> (status: Int32, output: String) {
+        try runCommand(
+            executablePath: "/usr/bin/env",
+            arguments: ["tailscale"] + arguments
+        )
+    }
+
+    static func tailscaleServeArguments(path: String) -> [String] {
+        [
+            "serve",
+            "--bg",
+            "--https=\(tailscaleHTTPSPort)",
+            "--set-path=\(path)",
+            "http://\(localBindHost):\(ServeCommand.defaultPort)",
+        ]
+    }
+
+    static func hasFunnelOnHTTPSPort(statusOutput: String) throws -> Bool {
+        let json: Substring
+        if let objectStart = statusOutput.firstIndex(of: "{") {
+            json = statusOutput[objectStart...]
+        } else if let nullStart = statusOutput.range(of: "null", options: .backwards)?.lowerBound {
+            json = statusOutput[nullStart...]
+        } else {
+            json = statusOutput[...]
+        }
+        guard let configuration = try JSONDecoder().decode(
+            TailscaleServeStatus?.self,
+            from: Data(json.utf8)
+        ) else {
+            return false
+        }
+        return configuration.allowFunnel?.contains { hostPort, enabled in
+            hostPort.hasSuffix(":\(tailscaleHTTPSPort)") && enabled
+        } == true
+    }
+
+    static func bootstrapLaunchAgent(errorPrefix: String) throws {
+        let result = try launchctl([
+            "bootstrap", "gui/\(getuid())", LaunchAgent.plistPath,
+        ])
+        guard result.status == 0 else {
+            throw ValidationError(
+                "\(errorPrefix) (\(result.status)): \(result.output)"
+            )
+        }
+    }
+
+    static func captureLaunchAgentSnapshot() throws -> LaunchAgentSnapshot {
+        let plistContents: String?
+        if FileManager.default.fileExists(atPath: LaunchAgent.plistPath) {
+            plistContents = try String(contentsOfFile: LaunchAgent.plistPath, encoding: .utf8)
+        } else {
+            plistContents = nil
+        }
+        let loaded = try launchctl(["print", serviceTarget]).status == 0
+        guard plistContents != nil || !loaded else {
+            throw ValidationError(
+                "Cannot safely reinstall \(LaunchAgent.label): the service is loaded but its plist is missing."
+            )
+        }
+        return LaunchAgentSnapshot(plistContents: plistContents, wasLoaded: loaded)
+    }
+
+    static func restoreLaunchAgent(_ snapshot: LaunchAgentSnapshot) throws {
+        try unloadIfLoaded()
+        if let plistContents = snapshot.plistContents {
+            try plistContents.write(
+                toFile: LaunchAgent.plistPath,
+                atomically: true,
+                encoding: .utf8
+            )
+            if snapshot.wasLoaded {
+                try bootstrapLaunchAgent(errorPrefix: "launchctl rollback bootstrap failed")
+            }
+        } else if FileManager.default.fileExists(atPath: LaunchAgent.plistPath) {
+            try FileManager.default.removeItem(atPath: LaunchAgent.plistPath)
+        }
+    }
+
+    static func performInstallation(
+        changes: () throws -> Void,
+        rollback: () throws -> Void
+    ) throws {
+        do {
+            try changes()
+        } catch {
+            do {
+                try rollback()
+            } catch let rollbackError {
+                throw ValidationError(
+                    "Installation failed: \(error). Rollback also failed: \(rollbackError)"
+                )
+            }
+            throw error
+        }
     }
 
     /// The launchd service target for the current user's GUI domain.
@@ -60,8 +183,43 @@ struct AgentCommand: ParsableCommand {
             abstract: "Install and start the LaunchAgent (runs at login, restarts on crashes)."
         )
 
+        @Option(
+            name: .long,
+            help: "Expose the server through Tailscale Serve at this path (for example, /reminders)."
+        )
+        var tailscaleServePath: String?
+
+        func validate() throws {
+            if let tailscaleServePath {
+                try validateExternalBasePath(tailscaleServePath)
+            }
+        }
+
         func run() throws {
             let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
+            let serveArguments: [String]
+            if let tailscaleServePath {
+                let status = try AgentCommand.tailscale(["serve", "status", "--json"])
+                guard status.status == 0 else {
+                    throw ValidationError(
+                        "tailscale serve status failed (\(status.status)): \(status.output)"
+                    )
+                }
+                guard try !AgentCommand.hasFunnelOnHTTPSPort(statusOutput: status.output) else {
+                    throw ValidationError(
+                        "Cannot add a private Serve path on HTTPS "
+                            + "\(AgentCommand.tailscaleHTTPSPort) while Funnel is enabled "
+                            + "on that port; doing so would make existing Funnel routes private."
+                    )
+                }
+                serveArguments = [
+                    "--bind", AgentCommand.localBindHost,
+                    "--port", String(ServeCommand.defaultPort),
+                    "--external-base-path", tailscaleServePath,
+                ]
+            } else {
+                serveArguments = []
+            }
             try FileManager.default.createDirectory(
                 atPath: (LaunchAgent.plistPath as NSString).deletingLastPathComponent,
                 withIntermediateDirectories: true
@@ -70,16 +228,32 @@ struct AgentCommand: ParsableCommand {
                 atPath: LaunchAgent.logDirectory,
                 withIntermediateDirectories: true
             )
-            try LaunchAgent.plist(executablePath: executable)
-                .write(toFile: LaunchAgent.plistPath, atomically: true, encoding: .utf8)
+            let snapshot = try AgentCommand.captureLaunchAgentSnapshot()
+            try AgentCommand.performInstallation {
+                try AgentCommand.unloadIfLoaded()
+                try LaunchAgent.plist(
+                    executablePath: executable,
+                    serveArguments: serveArguments
+                )
+                    .write(toFile: LaunchAgent.plistPath, atomically: true, encoding: .utf8)
 
-            // Unload any previous version first so reinstalls are idempotent.
-            _ = try? AgentCommand.unloadIfLoaded()
-            let (status, output) = try AgentCommand.launchctl(
-                ["bootstrap", "gui/\(getuid())", LaunchAgent.plistPath]
-            )
-            guard status == 0 else {
-                throw ValidationError("launchctl bootstrap failed (\(status)): \(output)")
+                try AgentCommand.bootstrapLaunchAgent(errorPrefix: "launchctl bootstrap failed")
+
+                if let tailscaleServePath {
+                    let arguments = AgentCommand.tailscaleServeArguments(
+                        path: tailscaleServePath
+                    )
+                    let (status, output) = try AgentCommand.tailscale(arguments)
+                    guard status == 0 else {
+                        throw ValidationError("tailscale serve failed (\(status)): \(output)")
+                    }
+                    print(
+                        "Tailscale Serve: \(tailscaleServePath) proxies to "
+                            + "http://\(AgentCommand.localBindHost):\(ServeCommand.defaultPort)"
+                    )
+                }
+            } rollback: {
+                try AgentCommand.restoreLaunchAgent(snapshot)
             }
 
             print("Installed \(LaunchAgent.label): runs '\(executable) serve' at login, restarts on crashes.")

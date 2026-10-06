@@ -29,10 +29,17 @@ public enum LaunchAgent {
             .replacingOccurrences(of: "'", with: "&apos;")
     }
 
-    /// Builds the plist XML: run `<executable> serve` at load, restart on
-    /// crashes but not on clean exits, logs under `logDirectory`.
-    public static func plist(executablePath: String) -> String {
-        """
+    /// Builds the plist XML: run `<executable> serve <serveArguments>` at load,
+    /// restart on crashes but not on clean exits, logs under `logDirectory`.
+    public static func plist(
+        executablePath: String,
+        serveArguments: [String] = []
+    ) -> String {
+        let programArguments = ([executablePath, "serve"] + serveArguments)
+            .map { "        <string>\(escapeXML($0))</string>" }
+            .joined(separator: "\n")
+
+        return """
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
         <plist version="1.0">
@@ -41,8 +48,7 @@ public enum LaunchAgent {
             <string>\(escapeXML(label))</string>
             <key>ProgramArguments</key>
             <array>
-                <string>\(escapeXML(executablePath))</string>
-                <string>serve</string>
+        \(programArguments)
             </array>
             <key>RunAtLoad</key>
             <true/>
