@@ -2,6 +2,7 @@
 // ABOUTME: Keeps uninstall idempotent without claiming success while a service remains loaded.
 
 import Testing
+import RemindersServer
 @testable import reminders
 
 @Suite("agent command")
@@ -66,30 +67,35 @@ struct AgentCommandTests {
         )
     }
 
-    @Test func detectsFunnelOnHTTPS443EvenWithACommandWarning() throws {
-        let status = """
-        Warning: client and server versions differ
-        {"AllowFunnel":{"host.example.ts.net:443":true}}
-        """
-
-        #expect(try AgentCommand.hasFunnelOnHTTPSPort(statusOutput: status))
+    @Test func tailscaleServeOffArgumentsRemoveOnlyTheCustomPath() {
+        #expect(
+            AgentCommand.tailscaleServeOffArguments(path: "/custom/reminders-mcp") == [
+                "serve",
+                "--https=443",
+                "--set-path=/custom/reminders-mcp",
+                "off",
+            ]
+        )
     }
 
-    @Test func acceptsServeStatusWithoutFunnel() throws {
-        let status = """
-        {"TCP":{"443":{"HTTPS":true}},"Web":{"host.example.ts.net:443":{}}}
-        """
+    @Test func customPathCanBeRecoveredFromTheInstalledPlist() throws {
+        let plist = LaunchAgent.plist(
+            executablePath: "/usr/local/bin/reminders",
+            serveArguments: AgentCommand.launchAgentServeArguments(
+                path: "/custom/reminders-mcp"
+            )
+        )
 
-        #expect(try !AgentCommand.hasFunnelOnHTTPSPort(statusOutput: status))
+        #expect(
+            try AgentCommand.tailscaleServePath(plistContents: plist)
+                == "/custom/reminders-mcp"
+        )
     }
 
-    @Test func acceptsEmptyServeStatusAfterACommandWarning() throws {
-        let status = """
-        Warning: client and server versions differ
-        null
-        """
+    @Test func defaultPlistHasNoTailscaleServePathToRemove() throws {
+        let plist = LaunchAgent.plist(executablePath: "/usr/local/bin/reminders")
 
-        #expect(try !AgentCommand.hasFunnelOnHTTPSPort(statusOutput: status))
+        #expect(try AgentCommand.tailscaleServePath(plistContents: plist) == nil)
     }
 
     @Test func failedInstallationRunsRollbackAndRethrowsTheOriginalError() {

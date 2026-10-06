@@ -9,14 +9,6 @@ struct AgentCommand: ParsableCommand {
     static let localBindHost = "127.0.0.1"
     static let tailscaleHTTPSPort = 443
 
-    private struct TailscaleServeStatus: Decodable {
-        let allowFunnel: [String: Bool]?
-
-        enum CodingKeys: String, CodingKey {
-            case allowFunnel = "AllowFunnel"
-        }
-    }
-
     struct LaunchAgentSnapshot {
         let plistContents: String?
         let wasLoaded: Bool
@@ -69,6 +61,15 @@ struct AgentCommand: ParsableCommand {
         ]
     }
 
+    static func tailscaleServeOffArguments(path: String) -> [String] {
+        [
+            "serve",
+            "--https=\(tailscaleHTTPSPort)",
+            "--set-path=\(path)",
+            "off",
+        ]
+    }
+
     static func launchAgentServeArguments(path: String?) -> [String] {
         guard let path else { return [] }
         return [
@@ -78,24 +79,28 @@ struct AgentCommand: ParsableCommand {
         ]
     }
 
-    static func hasFunnelOnHTTPSPort(statusOutput: String) throws -> Bool {
-        let json: Substring
-        if let objectStart = statusOutput.firstIndex(of: "{") {
-            json = statusOutput[objectStart...]
-        } else if let nullStart = statusOutput.range(of: "null", options: .backwards)?.lowerBound {
-            json = statusOutput[nullStart...]
-        } else {
-            json = statusOutput[...]
+    static func tailscaleServePath(plistContents: String) throws -> String? {
+        let plist = try PropertyListSerialization.propertyList(
+            from: Data(plistContents.utf8),
+            format: nil
+        )
+        guard
+            let dictionary = plist as? [String: Any],
+            let arguments = dictionary["ProgramArguments"] as? [String],
+            let optionIndex = arguments.firstIndex(of: "--external-base-path"),
+            arguments.indices.contains(optionIndex + 1)
+        else {
+            return nil
         }
-        guard let configuration = try JSONDecoder().decode(
-            TailscaleServeStatus?.self,
-            from: Data(json.utf8)
-        ) else {
-            return false
+        return arguments[optionIndex + 1]
+    }
+
+    static func installedTailscaleServePath() throws -> String? {
+        guard FileManager.default.fileExists(atPath: LaunchAgent.plistPath) else {
+            return nil
         }
-        return configuration.allowFunnel?.contains { hostPort, enabled in
-            hostPort.hasSuffix(":\(tailscaleHTTPSPort)") && enabled
-        } == true
+        let contents = try String(contentsOfFile: LaunchAgent.plistPath, encoding: .utf8)
+        return try tailscaleServePath(plistContents: contents)
     }
 
     static func bootstrapLaunchAgent(errorPrefix: String) throws {
@@ -206,21 +211,6 @@ struct AgentCommand: ParsableCommand {
 
         func run() throws {
             let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
-            if tailscaleServePath != nil {
-                let status = try AgentCommand.tailscale(["serve", "status", "--json"])
-                guard status.status == 0 else {
-                    throw ValidationError(
-                        "tailscale serve status failed (\(status.status)): \(status.output)"
-                    )
-                }
-                guard try !AgentCommand.hasFunnelOnHTTPSPort(statusOutput: status.output) else {
-                    throw ValidationError(
-                        "Cannot add a private Serve path on HTTPS "
-                            + "\(AgentCommand.tailscaleHTTPSPort) while Funnel is enabled "
-                            + "on that port; doing so would make existing Funnel routes private."
-                    )
-                }
-            }
             let serveArguments = AgentCommand.launchAgentServeArguments(
                 path: tailscaleServePath
             )
@@ -279,6 +269,19 @@ struct AgentCommand: ParsableCommand {
         )
 
         func run() throws {
+            if let tailscaleServePath = try AgentCommand.installedTailscaleServePath() {
+                try validateExternalBasePath(tailscaleServePath)
+                let result = try AgentCommand.tailscale(
+                    AgentCommand.tailscaleServeOffArguments(path: tailscaleServePath)
+                )
+                guard result.status == 0 else {
+                    throw ValidationError(
+                        "tailscale serve route removal failed "
+                            + "(\(result.status)): \(result.output)"
+                    )
+                }
+                print("Removed Tailscale Serve route at \(tailscaleServePath).")
+            }
             try AgentCommand.unloadIfLoaded()
             if FileManager.default.fileExists(atPath: LaunchAgent.plistPath) {
                 try FileManager.default.removeItem(atPath: LaunchAgent.plistPath)

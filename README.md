@@ -198,10 +198,6 @@ reminders agent uninstall
 reminders agent install --tailscale-serve-path /reminders
 ```
 
-There is no default Serve path. Omitting `--tailscale-serve-path` keeps the
-existing behavior: the LaunchAgent runs `reminders serve` with no extra
-arguments and binds directly to the Mac's Tailscale interface.
-
 `serve --generate-token` prints the token once, but it is not ephemeral: it is
 saved to `~/.config/reminders-mcp/token` and you can read it back anytime with
 `cat ~/.config/reminders-mcp/token`. To rotate it, delete that file and
@@ -214,6 +210,11 @@ without one. `--bind` overrides the interface, `--port` overrides the default
 7364, and `--token-file` overrides the token path
 (`~/.config/reminders-mcp/token`).
 
+The server's default external base path is `/`. Omitting
+`--tailscale-serve-path` preserves the existing behavior: the LaunchAgent runs
+`reminders serve` with no extra arguments and binds directly to the Mac's
+Tailscale interface.
+
 When `--tailscale-serve-path` is set, the LaunchAgent binds to
 `127.0.0.1:7364` instead and registers only that path with Tailscale Serve. For
 the `/reminders` example, the endpoints become:
@@ -223,10 +224,9 @@ the `/reminders` example, the endpoints become:
 - `https://<tailscale-hostname>/reminders/openapi`
 
 The installer uses a path-specific `tailscale serve` command, so other Serve
-routes remain unchanged. It refuses to continue when Funnel is enabled on
-HTTPS 443 because a Serve update would make every Funnel route on that port
-private. Tailscale Serve configuration persists separately
-from launchd. To remove this route, or before reinstalling it at a different
+routes remain unchanged. `reminders agent uninstall` reads the configured path
+from its LaunchAgent plist and removes that exact Serve route before removing
+the agent. To remove a route manually, or before reinstalling at a different
 path, remove only the old mount:
 
 ```bash
