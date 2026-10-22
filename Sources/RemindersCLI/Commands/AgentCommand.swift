@@ -164,6 +164,16 @@ struct AgentCommand: ParsableCommand {
         }
     }
 
+    /// Atomic replacement also works when updating the currently running executable.
+    static func installExecutable(contents: Data, atPath path: String) throws {
+        try FileManager.default.createDirectory(
+            atPath: (path as NSString).deletingLastPathComponent,
+            withIntermediateDirectories: true
+        )
+        try contents.write(to: URL(fileURLWithPath: path), options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path)
+    }
+
     /// The launchd service target for the current user's GUI domain.
     static var serviceTarget: String {
         "gui/\(getuid())/\(LaunchAgent.label)"
@@ -210,7 +220,11 @@ struct AgentCommand: ParsableCommand {
         }
 
         func run() throws {
-            let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
+            let source = Bundle.main.executablePath ?? CommandLine.arguments[0]
+            let executable = LaunchAgent.executablePath
+            let executableContents = try Data(contentsOf: URL(fileURLWithPath: source))
+            let previousExecutable = FileManager.default.fileExists(atPath: executable)
+                ? try Data(contentsOf: URL(fileURLWithPath: executable)) : nil
             let serveArguments = AgentCommand.launchAgentServeArguments(
                 path: tailscaleServePath
             )
@@ -225,6 +239,7 @@ struct AgentCommand: ParsableCommand {
             let snapshot = try AgentCommand.captureLaunchAgentSnapshot()
             try AgentCommand.performInstallation {
                 try AgentCommand.unloadIfLoaded()
+                try AgentCommand.installExecutable(contents: executableContents, atPath: executable)
                 try LaunchAgent.plist(
                     executablePath: executable,
                     serveArguments: serveArguments
@@ -247,6 +262,13 @@ struct AgentCommand: ParsableCommand {
                     )
                 }
             } rollback: {
+                // Stop the replacement before restoring the binary used by the old plist.
+                try AgentCommand.unloadIfLoaded()
+                if let previousExecutable {
+                    try AgentCommand.installExecutable(contents: previousExecutable, atPath: executable)
+                } else if FileManager.default.fileExists(atPath: executable) {
+                    try FileManager.default.removeItem(atPath: executable)
+                }
                 try AgentCommand.restoreLaunchAgent(snapshot)
             }
 
@@ -254,11 +276,12 @@ struct AgentCommand: ParsableCommand {
             print("Logs: \(LaunchAgent.logDirectory)")
             print("""
 
-            WARNING: macOS ties Reminders access to the binary's path and signature. If you \
-            rebuild or move \(executable), macOS may silently re-prompt for Reminders access. \
-            Nobody sees that prompt under launchd; the server then fails with a permission \
-            error until you run the binary once by hand and grant access again. Check \
-            'reminders agent status' if requests start failing.
+            The agent uses its own copy; rebuilding or moving the checkout will not change it.
+            To update it, run 'reminders agent install' from the new build with the same options.
+
+            macOS may require Reminders access for the installed copy after an install or update.
+            Run this command in Terminal and grant access if prompted:
+              "\(executable)" show-lists
             """)
         }
     }

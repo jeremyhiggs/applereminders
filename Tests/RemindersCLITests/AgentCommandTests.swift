@@ -1,12 +1,41 @@
 // ABOUTME: Unit tests for launchctl bootout result handling in the agent command.
 // ABOUTME: Keeps uninstall idempotent without claiming success while a service remains loaded.
 
+import Foundation
 import Testing
 import RemindersServer
 @testable import reminders
 
 @Suite("agent command")
 struct AgentCommandTests {
+
+    @Test func installedExecutableSurvivesSourceRemovalAndFailedUpdate() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let source = directory.appendingPathComponent("build/reminders")
+        let installed = directory.appendingPathComponent("Application Support/reminders-mcp/reminders")
+        let original = Data("original executable".utf8)
+        try AgentCommand.installExecutable(contents: original, atPath: source.path)
+        try AgentCommand.installExecutable(contents: Data(contentsOf: source), atPath: installed.path)
+        try FileManager.default.removeItem(at: source.deletingLastPathComponent())
+
+        #expect(try Data(contentsOf: installed) == original)
+        #expect(FileManager.default.isExecutableFile(atPath: installed.path))
+
+        struct InstallFailure: Error {}
+        #expect(throws: InstallFailure.self) {
+            try AgentCommand.performInstallation {
+                try AgentCommand.installExecutable(contents: Data("updated executable".utf8), atPath: installed.path)
+                throw InstallFailure()
+            } rollback: {
+                try AgentCommand.installExecutable(contents: original, atPath: installed.path)
+            }
+        }
+        #expect(try Data(contentsOf: installed) == original)
+        #expect(FileManager.default.isExecutableFile(atPath: installed.path))
+    }
 
     @Test func installAcceptsACustomTailscaleServePath() throws {
         let command = try AgentCommand.Install.parse([

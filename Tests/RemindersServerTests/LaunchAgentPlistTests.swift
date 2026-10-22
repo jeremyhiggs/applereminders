@@ -69,6 +69,7 @@ struct LaunchAgentPlistTests {
     }
 
     @Test func pathsLandInTheUserDomain() {
+        #expect(LaunchAgent.executablePath.hasSuffix("Library/Application Support/reminders-mcp/reminders"))
         #expect(LaunchAgent.plistPath.hasSuffix("Library/LaunchAgents/com.harperreed.reminders-mcp.plist"))
         #expect(LaunchAgent.logDirectory.hasSuffix("Library/Logs/reminders-mcp"))
     }

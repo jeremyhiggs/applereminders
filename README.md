@@ -198,6 +198,20 @@ reminders agent uninstall
 reminders agent install --tailscale-serve-path /reminders
 ```
 
+`agent install` copies the executable to
+`~/Library/Application Support/reminders-mcp/reminders` and points the LaunchAgent
+at that copy. You can move, clean, or rebuild the checkout without changing the
+running agent. To update the agent, run `agent install` from the new build with
+the same options. If installation fails, it restores the previous executable
+and LaunchAgent. `agent uninstall` leaves the installed executable, token, and logs.
+
+After installation, run the installed copy once in Terminal to grant Reminders
+access if macOS prompts:
+
+```bash
+"$HOME/Library/Application Support/reminders-mcp/reminders" show-lists
+```
+
 `serve --generate-token` prints the token once, but it is not ephemeral: it is
 saved to `~/.config/reminders-mcp/token` and you can read it back anytime with
 `cat ~/.config/reminders-mcp/token`. To rotate it, delete that file and
@@ -291,7 +305,7 @@ Dates accept the CLI formats (`today`, `tomorrow`, `next week`, `2030-01-15`,
   request never reaches a reminder route.
 - Request logs are one line each (method, path, status, duration); bodies and tokens are never logged.
 - launchd caveat: macOS ties Reminders access to the binary's path and
-  signature. Rebuilding or moving the binary can silently re-trigger the
+  signature. Updating the installed copy can silently re-trigger the
   permission prompt, which nobody sees under launchd; the server then fails
   until you run the binary by hand and re-grant access. `reminders agent
   status` shows the last exit state.

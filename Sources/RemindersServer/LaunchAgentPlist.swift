@@ -7,6 +7,12 @@ import Foundation
 public enum LaunchAgent {
     public static let label = "com.harperreed.reminders-mcp"
 
+    /// A stable executable location independent of the development checkout.
+    public static var executablePath: String {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/reminders-mcp/reminders").path
+    }
+
     /// The plist location inside the user's LaunchAgents directory.
     public static var plistPath: String {
         FileManager.default.homeDirectoryForCurrentUser
