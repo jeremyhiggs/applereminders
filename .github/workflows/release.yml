@@ -63,7 +63,7 @@ jobs:
         env:
           VERSION: ${{ steps.tag.outputs.version }}
           TAG: ${{ steps.tag.outputs.tag }}
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           SHA256=$(shasum -a 256 release/reminders-macos-universal.tar.gz | awk '{print $1}')
           URL="https://github.com/harperreed/applereminders/releases/download/${TAG}/reminders-macos-universal.tar.gz"
@@ -93,12 +93,15 @@ jobs:
           RUBY
           )
 
-          # Clone the tap repo and push the updated formula
-          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/harperreed/homebrew-tap.git" /tmp/homebrew-tap
+          # Supply the token through an ephemeral credential helper for clone and push.
+          git_tap() {
+            git -c credential.helper= -c 'credential.https://github.com.helper=!gh auth git-credential' "$@"
+          }
+          git_tap clone https://github.com/harperreed/homebrew-tap.git /tmp/homebrew-tap
           echo "${FORMULA}" > /tmp/homebrew-tap/Formula/applereminders.rb
           cd /tmp/homebrew-tap
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/applereminders.rb
           git commit -m "Update applereminders to ${VERSION}"
-          git push
+          git_tap push
