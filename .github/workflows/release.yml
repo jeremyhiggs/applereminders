@@ -63,6 +63,7 @@ jobs:
         env:
           VERSION: ${{ steps.tag.outputs.version }}
           TAG: ${{ steps.tag.outputs.tag }}
+          # GitHub CLI uses the separate Homebrew tap credential for clone and push.
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           SHA256=$(shasum -a 256 release/reminders-macos-universal.tar.gz | awk '{print $1}')
