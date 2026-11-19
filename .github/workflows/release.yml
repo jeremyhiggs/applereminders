@@ -20,6 +20,18 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Extract tag and version
+        id: tag
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          # The tag and version become Ruby string literals in the tap formula.
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tag must have the form vMAJOR.MINOR.PATCH with optional prerelease and build metadata." >&2
+            exit 1
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
       - name: Build release binaries (one per arch)
         # Build each arch separately with SwiftPM's native build system. The
         # combined `--arch arm64 --arch x86_64` universal build routes through
@@ -42,13 +54,6 @@ jobs:
           lipo -info release/reminders
           cd release && tar czf reminders-macos-universal.tar.gz reminders
           shasum -a 256 reminders-macos-universal.tar.gz > checksums.txt
-
-      - name: Extract tag and version
-        id: tag
-        run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
