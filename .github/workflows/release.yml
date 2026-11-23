@@ -60,6 +60,7 @@ jobs:
         with:
           name: ${{ steps.tag.outputs.tag }}
           generate_release_notes: true
+          fail_on_unmatched_files: true
           files: |
             release/reminders-macos-universal.tar.gz
             release/checksums.txt
@@ -71,7 +72,8 @@ jobs:
           # GitHub CLI uses the separate Homebrew tap credential for clone and push.
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
-          SHA256=$(shasum -a 256 release/reminders-macos-universal.tar.gz | awk '{print $1}')
+          CHECKSUM=$(shasum -a 256 release/reminders-macos-universal.tar.gz)
+          SHA256=${CHECKSUM%% *}
           URL="https://github.com/harperreed/applereminders/releases/download/${TAG}/reminders-macos-universal.tar.gz"
 
           FORMULA=$(cat <<RUBY
